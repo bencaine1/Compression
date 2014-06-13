@@ -6,6 +6,7 @@ Created on Wed May 28 08:46:16 2014
 """
 
 import os
+from os.path import getmtime
 import csv
 import sys
 import re
@@ -16,6 +17,13 @@ import matplotlib.pyplot as plt
 
 def timeStamped(fname, fmt='%Y-%m-%d-%H-%M-%S_{fname}'):
     return datetime.datetime.now().strftime(fmt).format(fname=fname)
+    
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
 
 def fillTemplate(sh, lst, overwrite=False):
     for i in xrange(len(lst)):
@@ -45,81 +53,105 @@ class DataPt:
         self.batchno = batchno
         self.conductive_additive = conductive_additive
         self.electrolyte = electrolyte
+    def __str__(self):
+        s = 'Specimen: ' + str(self.specimen) + '\n'
+        s += 'Mean: ' + str(self.mean) + '\n'
+        s += 'Std Dev: ' + str(self.stddev) + '\n'
+        s += 'Date: ' + str(self.date) + '\n'
+        s += 'Time: ' + str(self.time) + '\n'
+        s += 'Active Ingredient: ' + str(self.active_ingredient) + '\n'
+        s += 'Percent Solids: ' + str(self.percent_solids) + '\n'
+        s += 'Batch No: ' + str(self.batchno) + '\n'
+        s += 'Conductive Additive: ' + str(self.conductive_additive) + '\n'
+        s += 'Electrolyte: ' + str(self.electrolyte) + '\n'
+        return s
 
 data = []
-specimen, mean, stddev, date, time, active_ingredient, percent_solids, batchno, conductive_additive, electrolyte, comments = ('',)*11
 
-rootdir = 'C:/Users/bcaine/Documents/Compression/csv'
+rootdir = 'R:\\Characterization\\Compression Test'
 
-for folder in os.listdir(os.getcwd()):
-    if (os.path.isfile(folder + '/' + folder + '.csv')):
-        with open(folder + '/' + folder + '.csv', 'rb') as f:
-            i = 0
-            reader = csv.reader(f, delimiter=',')
-            reader = list(reader)
-            for row in reader:
-                for field in row:
-                    if field == ' Date':
-                        date = reader[i+3][1][1:]
-                    elif field == ' Time':
-                        time = reader[i+3][2][1:]
-                    elif field == ' Specimen':
-                        specimen = reader[i+3][3][1:]
-                    elif field == ' Mean:':
-                        mean = row[6]
-                    elif field == ' Std. Dev.:':
-                        stddev = row[6]
-                    elif field == 'Comments:':
-                        comments = reader[i+1][1]
-                    elif re.match('[A-Z]{5}[0-9]{2}[A-Z][0-9]{4}', field):
-                        batchno = field
-                i+=1
-        if (specimen != '' and mean != '' and mean != ' N/A' and stddev != '' and stddev != ' N/A'):
-            try:
-                mean = float(mean)
-            except ValueError:
-                mean = 0
-            try:
-                stddev = float(stddev)
-            except ValueError:
-                stddev = 0
-            #specimen = specimen.replace('_','') # get rid of underscores
-            active_ingredient = ''
-            percent_solids = ''
-            conductive_additive = ''
-            m = None
-            if ('LFP' in comments):
-                active_ingredient = 'LFP'
-            elif ('NMC' in comments):
-                active_ingredient = 'NMC'
-            elif ('MGPA' in comments or 'MGP-A' in comments or 'GPA' in comments or 'MPGA' in comments):
-                active_ingredient = 'MGPA'
-                comments_no_spaces = comments.replace(' ', '')
-                percent_solids = comments_no_spaces[comments_no_spaces.find('A') + 1:comments_no_spaces.find('A') + 3]
-            else:
-                active_ingredient = comments
-            if (percent_solids == ''):
-                if ('45' in comments):
-                    percent_solids = '45'
-                elif ('50' in comments):
-                    percent_solids = '50'
-            m = re.search('Ket([ ]?)0([.]?)[0-9][0-9]', comments)
-            if m:
-                conductive_additive = m.group()
-            else:
-                m = re.search('C45[0 ](?P<additive>[0-9]\.?[0-9]?)', comments)
+folders = [f for f in os.listdir(rootdir) if re.search('[0-9]{6}[AC]', f)]
+
+for folder in folders:
+    # check last update, skip if already in FileUpdate db
+    filedate = datetime.datetime.fromtimestamp(getmtime(os.path.join(rootdir, f))).strftime("%Y-%m-%d %H:%M:%S")
+    row = cursor.execute("""
+    select * from FileUpdate
+    where Filename = ? and LastUpdate = ?;
+    """, f, filedate).fetchone()
+    if row:
+        sys.stdout.write('^')
+        continue
+
+    specimen, mean, stddev, date, time, active_ingredient, percent_solids, batchno, conductive_additive, electrolyte, comments = ('',)*11
+    paths = []
+    paths.append(rootdir + '\\' + folder + '\\' + folder + '.csv')
+    paths.append(rootdir + '\\' + folder + '\\' + folder + ' Results.csv')
+    for path in paths:
+        if (os.path.isfile(path)):
+            with open(path, 'rb') as f:
+                specimen = folder
+                i = 0
+                reader = csv.reader(f, delimiter=',')
+                reader = list(reader)
+                for row in reader:
+                    for field in row:
+                        if field == ' Date':
+                            date = reader[i+3][1][1:]
+                        elif field == ' Time':
+                            time = reader[i+3][2][1:]
+                        elif field == ' Mean:':
+                            mean = row[6]
+                        elif field == ' Std. Dev.:':
+                            stddev = row[6]
+                        elif field == 'Comments:':
+                            comments = reader[i+1][1]
+                        elif re.match('[A-Z]{5}[0-9]{2}[A-Z][0-9]{4}', field):
+                            batchno = field
+                    i+=1
+            if (specimen != '' and '_' not in specimen and is_number(mean) and is_number(stddev)):
+                try:
+                    mean = float(mean)
+                except ValueError:
+                    mean = 0
+                try:
+                    stddev = float(stddev)
+                except ValueError:
+                    stddev = 0
+                #specimen = specimen.replace('_','') # get rid of underscores
+                m = None
+                if ('LFP' in comments):
+                    active_ingredient = 'LFP'
+                elif ('NMC' in comments):
+                    active_ingredient = 'NMC'
+                elif ('MGPA' in comments or 'MGP-A' in comments or 'GPA' in comments or 'MPGA' in comments):
+                    active_ingredient = 'MGPA'
+                    comments_no_spaces = comments.replace(' ', '')
+                    percent_solids = comments_no_spaces[comments_no_spaces.find('A') + 1:comments_no_spaces.find('A') + 3]
+                else:
+                    active_ingredient = comments
+                if (percent_solids == ''):
+                    if ('45' in comments):
+                        percent_solids = '45'
+                    elif ('50' in comments):
+                        percent_solids = '50'
+                m = re.search('Ket([ ]?)0([.]?)[0-9][0-9]', comments)
                 if m:
-                    conductive_additive = 'C45 ' + m.group('additive') + '%'
-            m = re.search('E[1-9]+', comments)
-            if m:
-                electrolyte = m.group()
-            t = DataPt(specimen, mean, stddev, date, time, active_ingredient, percent_solids, batchno, conductive_additive, electrolyte)
-            
-            #print 'Specimen: ' + specimen
-            #print 'Mean: ' + str(mean)
-            #print 'Std. Dev: ' + str(stddev)
-
-            data.append(t)
+                    conductive_additive = m.group()
+                else:
+                    m = re.search('C45[0 ](?P<additive>[0-9]\.?[0-9]?)', comments)
+                    if m:
+                        conductive_additive = 'C45 ' + m.group('additive') + '%'
+                m = re.search('E[1-9]+', comments)
+                if m:
+                    electrolyte = m.group()
+                t = DataPt(specimen, mean, stddev, date, time, active_ingredient, percent_solids, batchno, conductive_additive, electrolyte)
+                #print t
+                #print 'Specimen: ' + specimen
+                #print 'Mean: ' + str(mean)
+                #print 'Std. Dev: ' + str(stddev)
+        
+                data.append(t)
 
 # sort data by date
 data.sort(key=lambda t: datetime.datetime.strptime(t.date, '%m-%d-%y'))
@@ -137,7 +169,7 @@ for t in data:
 # 'new': generate new compression charts from the template.
 if (sys.argv[1] == 'new'):
     xl = Dispatch('Excel.Application')
-    book = xl.Workbooks.Open(rootdir + '/compression_data_template.xls')
+    book = xl.Workbooks.Open(rootdir + '\\compression_data_template.xls')
     c_sh = book.Sheets(1)
     a_sh = book.Sheets(2)
     lfp50_sh = book.Sheets(5)
@@ -181,35 +213,48 @@ if (sys.argv[1] == 'new'):
     book.Save() # Template file should always be the same as the most recent file.
     book.SaveAs(timeStamped('compression_data.xls'))
     
-# 'add_to_cell_test_data': Put the data into the 'cell test data' spreadsheets
+# 'add_to_cell_test_data': Put the mean and stddev into the 'cell test data' spreadsheets
 elif (sys.argv[1] == 'add_to_cell_test_data'):
-
+    exceldir = 'C:\\Users\\bcaine\\Documents\\Compression\\excel'
     xl = Dispatch("Excel.Application")
-    
+
+    errorfiles = []
+
     for datapt in data:
-        print datapt.specimen
-        filestr = 'C:/Users/bcaine/Documents/Compression/excel/' + datapt.specimen[:6] + '/' + datapt.specimen[:6] + '.xlsx'
-        if (os.path.isfile(filestr)):
-            try:
-                wbk = xl.Workbooks.Open(filestr)
-                for sh in wbk.Sheets:
-                    if sh.Name == "Slurry Data":
-                        type_range = sh.Range("B9:B49")
-                        for type in type_range:
-                            if (type.Value == cathodes[type.Row].specimen[6:7]):
-                                row, column = type.Row, type.Column
-                                sh.Cells(74, type.Row).Value = cathodes[type.Row].mean
-                                sh.Cells(75, type.Row).Value = cathodes[type.Row].stddev
-                                print "Success"
-                        break
-                wbk.Save()
-                wbk.Close()
-            except:
-                print "Probably password protected"
+        testreq = datapt.specimen[:6]
+        #print testreq
+        spec_no = datapt.specimen[7] if len(str(datapt.specimen)) > 7 else '1'
+        print "Specimen: ", datapt.specimen, "Spec no: ", spec_no
+        paths = []
+        paths.append(exceldir + '\\' + testreq + '\\' + testreq + '.xlsx')
+        paths.append(exceldir + '\\' + testreq + '\\' + testreq + '_shared.xlsx')
+        paths.append(exceldir + '\\' + testreq + '\\' + testreq + '.xlsm')
+        paths.append(exceldir + '\\' + testreq + '\\' + testreq + '_shared.xlsm')
+        for path in paths:
+            if (os.path.isfile(path)):
+                try:
+                    wbk = xl.Workbooks.Open(path)
+                    sh = wbk.Worksheets('Slurry Data')
+                    for i in xrange(9,49):
+                        # E.g., if B9 == 'C' and I9 == '1'. zfill takes care of '1' vs '0001'
+                        number = str(sh.Range('I' + str(i)).Value)
+                        number = re.sub('\.0', '', number)
+                        if (sh.Range('B' + str(i)).Value == datapt.specimen[6] and number.zfill(4) == spec_no.zfill(4)):
+                            sh.Range('BV' + str(i)).Value = datapt.mean
+                            sh.Range('BW' + str(i)).Value = datapt.stddev
+                            print "Success"
+                            break
+                    wbk.Save()
+                    wbk.Close()
+                except:
+                    print "Probably password protected"
+                    errorfiles.append(testreq)
+                    pass
     
     xl.Application.Quit()
+    print 'the following files did not process:', errorfiles
 
-# 'add_to_dbb': Add the data to the db
+# 'add_to_db': Add the data to the db
 elif (sys.argv[1] == 'add_to_db'):
     # connect to db
     cnxn_str =    """
@@ -223,62 +268,61 @@ elif (sys.argv[1] == 'add_to_db'):
     cnxn.autocommit = True
     cursor = cnxn.cursor()
     
-    # MSSQL has no "on duplicate key" option, so you need to make a new temp
-    # table, merge the tables, and the delete the temp table.
+    # Delete everything and reset "auto-increment" counters
+    # Slower, but ultimately more robust
     cursor.execute("""
-    create table StiffnessDataTmp (
-    Specimen varchar(50) primary key,
-    Mean float,
-    StdDev float,
-    Date varchar(50),
-    Time varchar(50),
-    Active_Ingredient varchar(50),
-    Percent_Solids varchar(50),
-    BatchNo varchar(50),
-    Conductive_Additive varchar(50),
-    Electrolyte varchar(50)
-    );
+    DELETE FROM StiffnessData;
+    DELETE FROM SlurryBatch;
+    DBCC CHECKIDENT (SlurryBatch, RESEED, 0);
+    DBCC CHECKIDENT (StiffnessData, RESEED, 0);
     """)
-#    cursor.execute("""
-#    create table anode_tmp (
-#    Specimen varchar(50) primary key,
-#    Mean float,
-#    StdDev float,
-#    Date varchar(50),
-#    Time varchar(50),
-#    Active_Ingredient varchar(50),
-#    Percent_Solids varchar(50),
-#    BatchNo varchar(50),
-#    Conductive_Additive varchar(50),
-#    Electrolyte varchar(50)
-#    );
-#    """)
-    # insert records into temp tables
-    for cathode in cathodes:
-        cursor.execute("""insert into dbo.cathode_tmp(Specimen, Mean, StdDev, Date, Time, Active_Ingredient, Percent_Solids, BatchNo, Conductive_Additive, Electrolyte)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, cathode.specimen, cathode.mean, cathode.stddev, cathode.date, cathode.time, cathode.active_ingredient, cathode.percent_solids, cathode.batchno, cathode.conductive_additive, cathode.electrolyte)
-    for anode in anodes:
-        cursor.execute("""insert into dbo.anode_tmp(Specimen, Mean, StdDev, Date, Time, Active_Ingredient, Percent_Solids, BatchNo, Conductive_Additive, Electrolyte)
-        values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
-        """, anode.specimen, anode.mean, anode.stddev, anode.date, anode.time, anode.active_ingredient, anode.percent_solids, anode.batchno, anode.conductive_additive, anode.electrolyte)
-    # merge temp table with actual table
-    cursor.execute("""
-    merge cathode_compression_data as T
-    using cathode_tmp as S
-    on S.Specimen = T.Specimen
-    when not matched then insert(Specimen, Mean, StdDev, Date, Time, Active_Ingredient, Percent_Solids, BatchNo, Conductive_Additive, Electrolyte)
-    values (S.Specimen, S.Mean, S.StdDev, S.Date, S.Time, S.Active_Ingredient, S.Percent_Solids, S.BatchNo, S.Conductive_Additive, S.Electrolyte); 
-    """)
-#    cursor.execute("""
-#    merge anode_compression_data as T
-#    using anode_tmp as S
-#    on S.Specimen = T.Specimen
-#    when not matched then insert(Specimen, Mean, StdDev, Date, Time, Active_Ingredient, Percent_Solids, BatchNo, Conductive_Additive, Electrolyte)
-#    values (S.Specimen, S.Mean, S.StdDev, S.Date, S.Time, S.Active_Ingredient, S.Percent_Solids, S.BatchNo, S.Conductive_Additive, S.Electrolyte); 
-#    """)
-    # delete temp tables
-    cursor.execute("drop table dbo.cathode_tmp, dbo.anode_tmp")
+    
+    # Populate SlurryBatch table
+    for t in data:
+        c_or_a = 'O'
+        if 'C' in t.specimen:
+            c_or_a = 'C'
+        elif 'A' in t.specimen:
+            c_or_a = 'A'
+        
+        # Repeated tests on the same slurry do not get put in the SlurryBatch table
+        test_req_number = t.specimen[:6]
+
+#        cursor.execute("""
+#        merge SlurryBatch as T
+#        using (select ?, ?, ?, ?, ?, ?, ?, ?, ?) as S (TestRequest, Batch, Active, ActiveVolumePercent, CathodeOrAnode, ConductiveAdditive, ConductiveAdditivePercent, ConductiveAdditive2, ConductiveAdditive2Percent)
+#        on S.Batch = T.Batch and S.Active = T.Active and S.TestRequest = T.TestRequest
+#        when not matched then insert (TestRequest, Batch, Active, ActiveVolumePercent, CathodeOrAnode, ConductiveAdditive, ConductiveAdditivePercent, ConductiveAdditive2, ConductiveAdditive2Percent)
+#        values (S.TestRequest, S.Batch, S.Active, S.ActiveVolumePercent, S.CathodeOrAnode, ConductiveAdditive, ConductiveAdditivePercent, ConductiveAdditive2, ConductiveAdditive2Percent);
+#        """, test_req_number, t.batchno, t.active_ingredient, t.percent_solids, c_or_a, t.conductive_additive, t.percent_solids, None, None)
+        
+        cursor.execute("""
+        insert into SlurryBatch (TestRequest, Batch, Active, ActiveVolumePercent, CathodeOrAnode, ConductiveAdditive, ConductiveAdditivePercent, ConductiveAdditive2, ConductiveAdditive2Percent)
+        values (?,?,?,?,?,?,?,?,?);
+        """, test_req_number, t.batchno, t.active_ingredient, t.percent_solids, c_or_a, t.conductive_additive, t.percent_solids, None, None)
+        
+    # Populate StiffnessData table
+    for t in data:
+        d = datetime.datetime.strptime(date + ' ' + time, '%m-%d-%y %H:%M:%S')
+        timestamp = d.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Determine SlurryBatchUID
+        slurry_batch_uid = None
+        row = cursor.execute("""
+        select UID from SlurryBatch
+        where Batch = ?
+        """, t.batchno).fetchone()
+        if row:
+            slurry_batch_uid = row[0]
+        
+        cursor.execute("""
+        merge StiffnessData as T
+        using (select ?, ?, ?, ?, ?) as S (SlurryBatchUID, Specimen, Mean, StdDev, Timestamp)
+        on S.Specimen = T.Specimen
+        when not matched then insert(SlurryBatchUID, Specimen, Mean, StdDev, Timestamp)
+        values (S.SlurryBatchUID, S.Specimen, S.Mean, S.StdDev, S.Timestamp);
+        """, slurry_batch_uid, t.specimen, t.mean, t.stddev, timestamp)
+        
     cnxn.commit()
     
     #close up shop
